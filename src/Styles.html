@@ -1,0 +1,43 @@
+<style>
+  :root {
+    --primary: #1F3A5F; --secondary: #4A6A8A; --bg: #F7F8FA; --surface: #FFFFFF;
+    --text: #1C1C1C; --success: #2E7D32; --warning: #B26A00; --danger: #C62828;
+    --border: #D9DEE5;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: 'Noto Sans', system-ui, Arial, sans-serif; font-size: 14px; line-height: 1.5;
+    color: var(--text); background: var(--bg); overflow-x: hidden;
+  }
+  h1 { font-size: 24px; font-weight: 600; margin: 0 0 8px; }
+  h2 { font-size: 20px; font-weight: 600; margin: 0 0 8px; }
+  p { margin: 0 0 8px; }
+  .caption { font-size: 12px; color: var(--secondary); }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 24px; }
+  .topbar { background: var(--primary); color: #fff; }
+  .topbar .wrap { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding-top: 12px; padding-bottom: 12px; }
+  .brand { font-size: 16px; font-weight: 600; }
+  .user { font-size: 12px; text-align: right; word-break: break-all; }
+  nav { background: var(--surface); border-bottom: 1px solid var(--border); }
+  nav .wrap { display: flex; flex-wrap: wrap; gap: 4px; padding-top: 4px; padding-bottom: 4px; }
+  nav a {
+    padding: 8px 16px; color: var(--secondary); text-decoration: none; border-radius: 4px;
+    font-weight: 600; font-size: 14px;
+  }
+  nav a.aktif { color: var(--primary); border-bottom: 2px solid var(--primary); border-radius: 0; }
+  nav a.nyahaktif { color: #9AA5B1; cursor: not-allowed; font-weight: 400; }
+  .status { display: flex; align-items: center; gap: 8px; margin-top: 16px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #9AA5B1; flex: none; }
+  .dot.ok { background: var(--success); }
+  .dot.gagal { background: var(--danger); }
+  .center { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
+  .center .card { max-width: 480px; width: 100%; }
+  .denied h1 { color: var(--danger); }
+  code { background: var(--bg); padding: 1px 4px; border-radius: 4px; word-break: break-all; }
+  @media (max-width: 640px) {
+    .user { text-align: left; }
+    .card { padding: 16px; }
+  }
+</style>

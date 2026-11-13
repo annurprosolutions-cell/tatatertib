@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;600&display=swap" rel="stylesheet">
+  <?!= include_('Styles') ?>
+</head>
+<body>
+  <div class="center">
+    <main class="card denied" role="alert">
+      <h1>Tiada kebenaran</h1>
+      <? if (tiadaEmel) { ?>
+        <p>Emel Google anda tidak dapat dikesan. Log masuk dengan akaun Google yang dibenarkan, kemudian buka semula pautan ini.</p>
+      <? } else { ?>
+        <p>Akaun <code><?= emel ?></code> tidak dibenarkan menggunakan <?= appName ?>.</p>
+        <p>Jika anda sepatutnya mempunyai akses, hubungi pentadbir sistem.</p>
+      <? } ?>
+      <p class="caption">Percubaan akses ini telah direkodkan.</p>
+    </main>
+  </div>
+</body>
+</html>

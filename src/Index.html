@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;600&display=swap" rel="stylesheet">
+  <?!= include_('Styles') ?>
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap">
+      <div class="brand"><?= appName ?></div>
+      <div class="user"><span id="nama"><?= nama ?></span><br><span class="caption" style="color:#C9D4E3"><?= emel ?></span></div>
+    </div>
+  </header>
+  <nav aria-label="Menu utama">
+    <div class="wrap">
+      <a href="#" class="aktif" aria-current="page">Carian</a>
+      <a class="nyahaktif" title="Fasa 2" aria-disabled="true">Tambah rekod</a>
+      <a class="nyahaktif" title="Fasa 4" aria-disabled="true">Dashboard</a>
+      <a class="nyahaktif" title="Fasa 6" aria-disabled="true">Audit log</a>
+      <a class="nyahaktif" title="Fasa 3" aria-disabled="true">Import</a>
+    </div>
+  </nav>
+  <main class="wrap">
+    <section class="card">
+      <h2>Selamat datang</h2>
+      <p>Log masuk berjaya. Fungsi carian akan disediakan dalam Fasa 2.</p>
+      <div class="status" role="status" aria-live="polite">
+        <span class="dot" id="dot"></span><span id="statusTeks" class="caption">Mengesahkan sesi di server...</span>
+      </div>
+    </section>
+  </main>
+  <script>
+    (function () {
+      var dot = document.getElementById('dot');
+      var teks = document.getElementById('statusTeks');
+      google.script.run
+        .withSuccessHandler(function (r) {
+          dot.className = 'dot ok';
+          teks.textContent = 'Sesi disahkan: ' + r.nama;
+        })
+        .withFailureHandler(function () {
+          dot.className = 'dot gagal';
+          teks.textContent = 'Tiada kebenaran. Sila muat semula halaman atau hubungi pentadbir.';
+        })
+        .api_whoami();
+    })();
+  </script>
+</body>
+</html>
