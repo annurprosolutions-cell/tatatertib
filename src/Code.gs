@@ -1,5 +1,5 @@
 /**
- * Code.gs - titik masuk web app (doGet) dan fungsi yang dipanggil dari browser.
+ * Code.gs - titik masuk web app (doGet). Fungsi yang dipanggil dari browser ada dalam Api.gs.
  */
 
 function doGet() {
@@ -12,6 +12,8 @@ function doGet() {
     tpl.appName = APP_NAME;
     tpl.nama = auth.nama;
     tpl.emel = auth.emel;
+    tpl.bolehImport = bolehImport_(auth);
+    tpl.mod = modSistem_();
     return tpl.evaluate()
       .setTitle(APP_NAME)
       .addMetaTag('viewport', 'width=device-width, initial-scale=1');
@@ -45,10 +47,4 @@ function renderMessage_(tajuk, mesej) {
 /** Untuk template: <?!= include_('Styles') ?> */
 function include_(nama) {
   return HtmlService.createHtmlOutputFromFile(nama).getContent();
-}
-
-/** Dipanggil browser selepas halaman dimuat. Sahkan sesi masih sah di server. */
-function api_whoami() {
-  const auth = requireAdmin_();
-  return { nama: auth.nama, emel: auth.emel };
 }

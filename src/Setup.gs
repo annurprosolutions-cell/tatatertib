@@ -5,6 +5,7 @@
  */
 
 function setupSystem() {
+  pastikanPemilik_();
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   if (!ss) {
     throw new Error('Projek ini mesti dibuka melalui Extensions > Apps Script dari dalam Google Sheet.');
@@ -12,12 +13,28 @@ function setupSystem() {
   PropertiesService.getScriptProperties().setProperty(PROP_SPREADSHEET_ID, ss.getId());
 
   const laporan = [];
+  try {
+    // Sejajarkan zon masa supaya cap masa audit dan tarikh dipaparkan ikut waktu Malaysia.
+    if (ss.getSpreadsheetTimeZone() !== TZ_SISTEM) {
+      ss.setSpreadsheetTimeZone(TZ_SISTEM);
+      laporan.push('Zon masa Sheet ditetapkan: ' + TZ_SISTEM);
+    }
+  } catch (err) {
+    laporan.push('AMARAN: zon masa Sheet tidak dapat ditetapkan (' + err.message + '). Tetapkan di File > Settings.');
+  }
+  // Tarikh dibaca melalui Date; jika zon masa skrip dan Sheet berbeza, hari boleh teranjak.
+  const zonSkrip = Session.getScriptTimeZone();
+  if (zonSkrip && zonSkrip !== TZ_SISTEM) {
+    laporan.push('AMARAN: zon masa skrip (' + zonSkrip + ') berbeza daripada ' + TZ_SISTEM +
+      '. Dalam editor: Project Settings > tanda "Show appsscript.json" > tetapkan "timeZone": "' + TZ_SISTEM + '".');
+  }
+
   const sheets = {};
   Object.keys(HEADERS).forEach(function (nama) {
     sheets[nama] = ensureSheet_(ss, nama, HEADERS[nama], laporan);
   });
 
-  setupRekodFormat_(sheets[SHEETS.REKOD], laporan);
+  setupRekodFormat_(sheets[SHEETS.REKOD]);
   setupDropdowns_(sheets[SHEETS.REKOD], laporan);
   setupAuditFormat_(sheets[SHEETS.AUDIT]);
   seedWhitelist_(sheets[SHEETS.WHITELIST], laporan);
@@ -30,7 +47,7 @@ function setupSystem() {
 
   const belumSah = Object.keys(DROPDOWNS).filter(function (k) { return !DROPDOWNS[k].disahkan; });
   if (belumSah.length) {
-    laporan.push('AMARAN: senarai dropdown masih PLACEHOLDER (perlu daripada klien): ' + belumSah.join(', '));
+    laporan.push('CATATAN: senarai dropdown belum disahkan klien (teks bebas diterima): ' + belumSah.join(', '));
   }
 
   const teks = laporan.join('\n');
@@ -73,10 +90,11 @@ function colIndex_(sheet, nama) {
   return i + 1;
 }
 
-function setupRekodFormat_(sheet, laporan) {
+function setupRekodFormat_(sheet) {
   const baris = Math.max(sheet.getMaxRows() - 1, 1);
-  // IC sebagai teks supaya sifar di depan tidak hilang.
-  sheet.getRange(2, colIndex_(sheet, 'ic'), baris, 1).setNumberFormat('@');
+  // Semua lajur teks (termasuk IC supaya sifar di depan tidak hilang, dan nama yang bermula "=")
+  // berformat teks. Lajur tarikh dan nombor ditetapkan semula di bawah.
+  sheet.getRange(2, 1, baris, sheet.getLastColumn()).setNumberFormat('@');
   sheet.getRange(2, colIndex_(sheet, 'tarikh_kuatkuasa'), baris, 1).setNumberFormat('dd/mm/yyyy');
   sheet.getRange(2, colIndex_(sheet, 'created_at'), baris, 1).setNumberFormat('dd/mm/yyyy hh:mm:ss');
   sheet.getRange(2, colIndex_(sheet, 'updated_at'), baris, 1).setNumberFormat('dd/mm/yyyy hh:mm:ss');
@@ -85,15 +103,22 @@ function setupRekodFormat_(sheet, laporan) {
 
 function setupDropdowns_(sheet, laporan) {
   const baris = Math.max(sheet.getMaxRows() - 1, 1);
+  const dipasang = [];
   Object.keys(DROPDOWNS).forEach(function (medan) {
     const def = DROPDOWNS[medan];
+    const julat = sheet.getRange(2, colIndex_(sheet, medan), baris, 1);
+    if (!def.nilai.length) {
+      julat.clearDataValidations();   // senarai belum ada: teks bebas
+      return;
+    }
     const rule = SpreadsheetApp.newDataValidation()
       .requireValueInList(def.nilai, true)
       .setAllowInvalid(!def.disahkan)
       .build();
-    sheet.getRange(2, colIndex_(sheet, medan), baris, 1).setDataValidation(rule);
+    julat.setDataValidation(rule);
+    dipasang.push(medan);
   });
-  laporan.push('Dropdown dipasang: ' + Object.keys(DROPDOWNS).join(', '));
+  laporan.push('Dropdown dipasang: ' + (dipasang.join(', ') || '(tiada)'));
 }
 
 function setupAuditFormat_(sheet) {
@@ -101,18 +126,49 @@ function setupAuditFormat_(sheet) {
   sheet.getRange(2, 1, baris, 1).setNumberFormat('dd/mm/yyyy hh:mm:ss');
 }
 
+/**
+ * Seed admin pertama (pemilik) jika belum ada sebarang emel.
+ * PENTING: jangan guna Range.insertCheckboxes() di sini. Ia menetapkan semula semua sel kepada
+ * "tidak ditanda" (FALSE), jadi run kali kedua akan menyahaktifkan semua admin. Guna peraturan
+ * pengesahan data checkbox, yang tidak mengubah nilai sedia ada.
+ */
 function seedWhitelist_(sheet, laporan) {
+  const emelCol = colIndex_(sheet, 'emel');
+  const namaCol = colIndex_(sheet, 'nama');
   const aktifCol = colIndex_(sheet, 'aktif');
-  sheet.getRange(2, aktifCol, Math.max(sheet.getMaxRows() - 1, 1), 1).insertCheckboxes();
-  if (sheet.getLastRow() >= 2) return;
-  // setupSystem dijalankan manual oleh pemilik, jadi effective user = pemilik.
-  const emel = (Session.getEffectiveUser().getEmail() || Session.getActiveUser().getEmail() || '').toLowerCase();
-  if (!emel) {
-    laporan.push('AMARAN: emel pemilik tidak dapat dikesan. Isi baris pertama admin_whitelist secara manual.');
-    return;
+  const baris = Math.max(sheet.getMaxRows() - 1, 1);
+
+  // Baiki baki FALSE pada baris tanpa emel (contoh: daripada setupSystem versi lama).
+  const aktifJulat = sheet.getRange(2, aktifCol, baris, 1);
+  const emelNilai = sheet.getRange(2, emelCol, baris, 1).getValues();
+  const aktifNilai = aktifJulat.getValues();
+  let diubah = false;
+  for (let i = 0; i < baris; i++) {
+    if (String(emelNilai[i][0]).trim() === '' && aktifNilai[i][0] === false) {
+      aktifNilai[i][0] = '';
+      diubah = true;
+    }
   }
-  sheet.appendRow([emel, 'Pemilik', true]);
-  laporan.push('Whitelist di-seed dengan 1 admin (pemilik). Tambah 3 admin lain secara manual.');
+  if (diubah) aktifJulat.setValues(aktifNilai);
+
+  const adaAdmin = emelNilai.some(function (r) { return String(r[0]).trim() !== ''; });
+  if (!adaAdmin) {
+    // setupSystem dijalankan manual oleh pemilik, jadi effective user = pemilik.
+    const emel = String(Session.getEffectiveUser().getEmail() || Session.getActiveUser().getEmail() || '')
+      .trim().toLowerCase();
+    if (!emel) {
+      laporan.push('AMARAN: emel pemilik tidak dapat dikesan. Isi baris pertama admin_whitelist secara manual.');
+    } else {
+      sheet.getRange(2, emelCol).setValue(emel);
+      sheet.getRange(2, namaCol).setValue('Pemilik');
+      sheet.getRange(2, aktifCol).setValue(true);
+      laporan.push('Whitelist di-seed dengan 1 admin (pemilik). Tambah admin lain secara manual dan tanda aktif.');
+    }
+  }
+
+  // Kotak tanda untuk 50 baris pertama (4 admin sahaja, jadi mencukupi).
+  const peraturan = SpreadsheetApp.newDataValidation().requireCheckbox().build();
+  sheet.getRange(2, aktifCol, Math.min(baris, 50), 1).setDataValidation(peraturan);
 }
 
 function seedConfig_(sheet, laporan) {
