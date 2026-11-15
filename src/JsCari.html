@@ -1,0 +1,113 @@
+<script>
+/* S-02 Carian dan S-03 senarai hasil. */
+(function (global) {
+  'use strict';
+  var App = global.App;
+  var h = App.h;
+  var SAIZ = 25;
+  var LAJUR = [['Nama', 'nama'], ['No. IC', 'ic'], ['Gred', 'gred'], ['Negeri', 'negeri'], ['Tahun', 'tahun'],
+    ['Salah laku', 'salahlaku'], ['Keputusan', 'keputusan_tatatertib']];
+
+  function jadual(senarai, halaman) {
+    var potong = senarai.slice((halaman - 1) * SAIZ, halaman * SAIZ);
+    var tbody = h('tbody');
+    potong.forEach(function (r) {
+      var pautan = '#/rekod/' + App.enc(r.id);
+      var tr = h('tr', {
+        class: 'baris-klik',
+        onclick: function (e) { if (!e.target.closest('a')) App.pergi(pautan); }
+      });
+      LAJUR.forEach(function (l, i) {
+        var nilai = App.teks(r[l[1]]);
+        tr.appendChild(h('td', { 'data-label': l[0] }, i === 0 ? h('a', { href: pautan }, nilai) : nilai));
+      });
+      tbody.appendChild(tr);
+    });
+    return h('div', { class: 'jadual-bungkus' },
+      h('table', { class: 'data' },
+        h('thead', null, h('tr', null, LAJUR.map(function (l) { return h('th', { scope: 'col' }, l[0]); }))),
+        tbody));
+  }
+
+  App.views.cari = function (c) {
+    var s = App.state.cari || { q: '', hasil: null, halaman: 1 };
+    App.state.cari = s;
+
+    var input = h('input', {
+      type: 'search', id: 'q', name: 'q', autocomplete: 'off', maxlength: '100',
+      placeholder: 'Taip nama atau No. IC', 'aria-label': 'Carian nama atau No. IC'
+    });
+    input.value = s.q;
+    var butang = h('button', { type: 'submit', class: 'btn btn-primary' }, 'Cari');
+    var hasilEl = h('div', { id: 'hasil', 'aria-live': 'polite' });
+
+    c.el.appendChild(App.tajuk('Carian rekod', null,
+      h('a', { href: '#/tambah', class: 'btn btn-secondary' }, 'Tambah rekod')));
+    c.el.appendChild(h('section', { class: 'card' },
+      h('form', {
+        class: 'cari-borang', role: 'search',
+        onsubmit: function (e) { e.preventDefault(); cari(); }
+      }, h('div', { class: 'medan-cari' }, input), butang)));
+    c.el.appendChild(hasilEl);
+
+    function pesanan(jenis, mesej) {
+      App.kosongkan(hasilEl).appendChild(App.banner(jenis, mesej));
+    }
+
+    function cari() {
+      var q = input.value.trim();
+      if (q.length < 2) { pesanan('amaran-b', 'Taip sekurang-kurangnya 2 aksara.'); input.focus(); return; }
+      butang.disabled = true;
+      App.kosongkan(hasilEl).appendChild(App.spinner('Mencari...'));
+      App.api('cariRekod', q).then(function (res) {
+        if (!c.aktif()) return;
+        butang.disabled = false;
+        if (!res.ok) { pesanan('ralat-b', res.mesej); return; }
+        s.q = q; s.hasil = res; s.halaman = 1;
+        lukis();
+      });
+    }
+
+    function halamanButang(jumlah) {
+      var maks = Math.max(Math.ceil(jumlah / SAIZ), 1);
+      if (maks <= 1) return null;
+      return h('nav', { class: 'halaman', 'aria-label': 'Halaman hasil carian' },
+        h('button', { type: 'button', class: 'btn btn-secondary btn-kecil', disabled: s.halaman <= 1, onclick: function () { s.halaman--; lukis(); } }, 'Sebelum'),
+        h('span', null, 'Halaman ' + s.halaman + ' daripada ' + maks),
+        h('button', { type: 'button', class: 'btn btn-secondary btn-kecil', disabled: s.halaman >= maks, onclick: function () { s.halaman++; lukis(); } }, 'Seterusnya'));
+    }
+
+    function lukis() {
+      App.kosongkan(hasilEl);
+      var r = s.hasil;
+      if (!r) {
+        if (App.sesi && App.sesi.jumlahRekod === 0) {
+          hasilEl.appendChild(App.kosong('Belum ada rekod.', h('div', { class: 'tindakan', style: 'display:flex;gap:8px;justify-content:center;flex-wrap:wrap' },
+            h('a', { href: '#/tambah', class: 'btn btn-primary' }, 'Tambah rekod pertama'),
+            App.sesi.bolehImport ? h('a', { href: '#/import', class: 'btn btn-secondary' }, 'Import data sedia ada') : null)));
+        } else {
+          hasilEl.appendChild(h('p', { class: 'ringkasan-hasil' }, 'Taip nama atau No. IC, kemudian tekan Cari.'));
+        }
+        return;
+      }
+      if (r.kosong) {
+        hasilEl.appendChild(App.kosong('Belum ada rekod.', h('a', { href: '#/tambah', class: 'btn btn-primary' }, 'Tambah rekod')));
+        return;
+      }
+      if (r.jumlah === 0) {
+        hasilEl.appendChild(App.kosong('Tiada rekod dijumpai untuk "' + s.q + '".'));
+        return;
+      }
+      var ringkas = r.jumlah + ' rekod dijumpai';
+      if (r.terhad) ringkas += '. Menunjukkan ' + r.hasil.length + ' yang pertama, perincikan carian anda.';
+      hasilEl.appendChild(h('p', { class: 'ringkasan-hasil' }, ringkas));
+      hasilEl.appendChild(jadual(r.hasil, s.halaman));
+      var nav = halamanButang(r.hasil.length);
+      if (nav) hasilEl.appendChild(nav);
+    }
+
+    lukis();
+    if (!s.hasil) input.focus();
+  };
+})(window);
+</script>

@@ -1,0 +1,245 @@
+<script>
+/* JsCore: rangka SPA. Pembina DOM selamat (tiada innerHTML untuk data), router hash, pembantu umum. */
+(function (global) {
+  'use strict';
+  var doc = global.document;
+
+  var App = global.App = {
+    views: {},
+    state: { rekod: {}, cari: null, meta: null, importan: null },
+    sesi: null,
+    renderId: 0,
+    pembersih: []
+  };
+
+  /* ---------- pembina DOM ---------- */
+  function tambah(el, anak) {
+    if (anak === null || anak === undefined || anak === false) return;
+    if (Array.isArray(anak)) { anak.forEach(function (a) { tambah(el, a); }); return; }
+    if (anak.nodeType) { el.appendChild(anak); return; }
+    el.appendChild(doc.createTextNode(String(anak)));
+  }
+  var h = App.h = function (tag, attrs) {
+    var el = doc.createElement(tag);
+    if (attrs) {
+      Object.keys(attrs).forEach(function (k) {
+        var v = attrs[k];
+        if (v === null || v === undefined || v === false) return;
+        if (k === 'class') el.className = v;
+        else if (k.indexOf('on') === 0 && typeof v === 'function') el.addEventListener(k.slice(2), v);
+        else el.setAttribute(k, v === true ? '' : v);
+      });
+    }
+    for (var i = 2; i < arguments.length; i++) tambah(el, arguments[i]);
+    return el;
+  };
+  App.kosongkan = function (el) { while (el.firstChild) el.removeChild(el.firstChild); return el; };
+  App.teks = function (v) { return v === undefined || v === null || String(v) === '' ? '-' : String(v); };
+  App.enc = function (s) { return encodeURIComponent(s); };
+
+  App.spinner = function (teks) {
+    return h('div', { class: 'memuat', role: 'status' },
+      h('span', { class: 'putar', 'aria-hidden': 'true' }), h('span', null, teks || 'Memuatkan...'));
+  };
+  /* jenis: ralat-b | amaran-b | maklumat-b | ok-b */
+  App.banner = function (jenis, isi) {
+    return h('div', { class: 'banner ' + jenis, role: jenis === 'ralat-b' ? 'alert' : 'status' }, isi);
+  };
+  App.kosong = function (mesej, tindakan) {
+    return h('div', { class: 'kosong' }, h('p', null, mesej), tindakan || null);
+  };
+  App.lencana = function (teks) {
+    var t = String(teks || '').toLowerCase();
+    var kelas = 'kelabu';
+    if (/lulus|diluluskan|berjaya/.test(t)) kelas = 'hijau';
+    else if (/tolak|ditolak|gagal/.test(t)) kelas = 'merah';
+    return h('span', { class: 'lencana ' + kelas }, App.teks(teks));
+  };
+  App.tajuk = function (teks, sub, tindakan) {
+    return h('div', { class: 'tajuk-baris' },
+      h('div', null, h('h1', { tabindex: '-1' }, teks), sub ? h('div', { class: 'sub-tajuk' }, sub) : null),
+      tindakan ? h('div', { class: 'tindakan' }, tindakan) : null);
+  };
+
+  /* ---------- panggilan server ---------- */
+  App.api = function (fn) {
+    var args = Array.prototype.slice.call(arguments, 1);
+    return new Promise(function (resolve) {
+      var run = global.google.script.run
+        .withSuccessHandler(function (res) {
+          resolve(res || { ok: false, kod: 'RALAT', mesej: 'Tiada respons daripada server.' });
+        })
+        .withFailureHandler(function () {
+          resolve({ ok: false, kod: 'RALAT', mesej: 'Sambungan ke server gagal. Sila cuba lagi.' });
+        });
+      run[fn].apply(run, args);
+    }).then(function (res) {
+      if (res && res.ok === false && res.kod === 'TIADA_KEBENARAN') App.sekat(res.mesej);
+      return res;
+    });
+  };
+
+  /* Sesi tidak sah lagi (contoh: admin dinyahaktifkan). Halang semua paparan. */
+  App.sekat = function (mesej) {
+    var el = doc.getElementById('sekat');
+    App.kosongkan(el);
+    el.appendChild(h('div', { class: 'card denied', style: 'max-width:460px' },
+      h('h1', { id: 'sekat-tajuk' }, 'Tiada kebenaran'),
+      h('p', null, mesej || 'Akaun anda tidak lagi dibenarkan menggunakan sistem ini.'),
+      h('p', { class: 'caption' }, 'Hubungi pentadbir sistem jika ini satu kesilapan.'),
+      h('button', { type: 'button', class: 'btn btn-primary', onclick: function () { global.location.reload(); } }, 'Muat semula')));
+    el.hidden = false;
+  };
+
+  /* ---------- toast dan modal ---------- */
+  App.toast = function (mesej, jenis) {
+    var kotak = doc.getElementById('toasts');
+    var t = h('div', { class: 'toast ' + (jenis === 'ralat' ? 'ralat-t' : 'ok'), role: 'status' }, mesej);
+    kotak.appendChild(t);
+    setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 3000);
+  };
+
+  App.sahkan = function (tajuk, mesej, labelOk, bahaya) {
+    return new Promise(function (resolve) {
+      var terdahulu = doc.activeElement;
+      var batal = h('button', { type: 'button', class: 'btn btn-secondary', onclick: function () { tutup(false); } }, 'Batal');
+      var ok = h('button', { type: 'button', class: 'btn ' + (bahaya ? 'btn-danger' : 'btn-primary'), onclick: function () { tutup(true); } }, labelOk || 'Teruskan');
+      var kotak = h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'modal-tajuk' },
+        h('h2', { id: 'modal-tajuk' }, tajuk), h('div', null, mesej), h('div', { class: 'modal-butang' }, batal, ok));
+      var latar = h('div', { class: 'modal-latar' }, kotak);
+      function kekunci(e) {
+        if (e.key === 'Escape') { e.preventDefault(); tutup(false); }
+        else if (e.key === 'Tab') {
+          e.preventDefault();
+          (doc.activeElement === ok ? batal : ok).focus();
+        }
+      }
+      function tutup(hasil) {
+        doc.removeEventListener('keydown', kekunci, true);
+        if (latar.parentNode) latar.parentNode.removeChild(latar);
+        if (terdahulu && terdahulu.focus) terdahulu.focus();
+        resolve(hasil);
+      }
+      doc.addEventListener('keydown', kekunci, true);
+      doc.body.appendChild(latar);
+      ok.focus();
+    });
+  };
+
+  /* ---------- muat turun ---------- */
+  App.muatTurunBlob = function (nama, blob) {
+    var url = global.URL.createObjectURL(blob);
+    var a = h('a', { href: url, download: nama });
+    doc.body.appendChild(a);
+    a.click();
+    doc.body.removeChild(a);
+    setTimeout(function () { global.URL.revokeObjectURL(url); }, 5000);
+  };
+  App.csv = function (baris) {
+    return '﻿' + baris.map(function (b) {
+      return b.map(function (c) {
+        var s = String(c === undefined || c === null ? '' : c);
+        if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+        return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+      }).join(',');
+    }).join('\r\n');
+  };
+
+  /* ---------- Chart.js (CDN, dengan pilihan ganti). Jika gagal, dashboard guna jadual sahaja. ---------- */
+  var SUMBER_CHART = [
+    { src: 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js' },
+    { src: 'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js', integrity: 'sha384-dug+JxfBvklEQdJ4AYuBBAIScUz0bVN73xpy273gcAwHjb3qI0fXmuYNaNfdyYJG' }
+  ];
+  App.muatChart = function () {
+    if (global.Chart) return Promise.resolve(true);
+    if (App._chartJanji) return App._chartJanji;
+    App._chartJanji = new Promise(function (resolve) {
+      var i = 0;
+      var selesai = false;
+      function tamat(ok) { if (!selesai) { selesai = true; resolve(ok); } }
+      var tamatMasa = setTimeout(function () { tamat(!!global.Chart); }, 10000);
+      (function cuba() {
+        if (global.Chart) { clearTimeout(tamatMasa); return tamat(true); }
+        if (i >= SUMBER_CHART.length) { clearTimeout(tamatMasa); return tamat(false); }
+        var sumber = SUMBER_CHART[i++];
+        var s = doc.createElement('script');
+        s.src = sumber.src;
+        if (sumber.integrity && sumber.integrity.indexOf('sha384-') === 0) { s.integrity = sumber.integrity; s.crossOrigin = 'anonymous'; }
+        s.onload = cuba;
+        s.onerror = cuba;
+        doc.head.appendChild(s);
+      })();
+    });
+    return App._chartJanji;
+  };
+
+  /* ---------- router ---------- */
+  var NAV = { cari: 'cari', rekod: 'cari', opr: 'cari', tambah: 'tambah', dashboard: 'dashboard', audit: 'audit', import: 'import' };
+
+  App.laluan = function () {
+    var hash = String(global.location.hash || '').replace(/^#\/?/, '');
+    var bahagian = hash.split('/').filter(Boolean).map(function (x) { try { return decodeURIComponent(x); } catch (e) { return x; } });
+    return { nama: bahagian[0] || 'cari', param: bahagian.slice(1) };
+  };
+
+  App.pergi = function (hash) {
+    if (global.location.hash === hash) App.lukis();
+    else global.location.hash = hash;
+  };
+
+  /* Daftar fungsi yang dijalankan sebelum paparan seterusnya (contoh: lepaskan URL blob). */
+  App.bersihkanNanti = function (fn) { App.pembersih.push(fn); };
+
+  App.lukis = function () {
+    var l = App.laluan();
+    var nama = App.views[l.nama] ? l.nama : 'cari';
+    App.pembersih.splice(0).forEach(function (fn) { try { fn(); } catch (e) { /* abaikan */ } });
+    App.renderId++;
+    var id = App.renderId;
+    var el = doc.getElementById('paparan');
+    App.kosongkan(el);
+
+    var aktif = NAV[nama] || 'cari';
+    Array.prototype.forEach.call(doc.querySelectorAll('nav.menu a[data-nav]'), function (a) {
+      if (a.getAttribute('data-nav') === aktif) { a.classList.add('aktif'); a.setAttribute('aria-current', 'page'); }
+      else { a.classList.remove('aktif'); a.removeAttribute('aria-current'); }
+    });
+
+    var ctx = { el: el, param: l.param, aktif: function () { return id === App.renderId; } };
+    try {
+      App.views[nama](ctx);
+    } catch (err) {
+      el.appendChild(App.banner('ralat-b', 'Paparan tidak dapat dimuatkan. Sila muat semula halaman.'));
+      if (global.console) global.console.error(err);
+    }
+    var tajuk = el.querySelector('h1');
+    if (tajuk) tajuk.focus({ preventScroll: true });
+    global.scrollTo(0, 0);
+  };
+
+  /* Ralat tak dijangka dalam panggilan balik: beritahu pengguna, jangan biarkan spinner tergantung senyap. */
+  global.addEventListener('unhandledrejection', function () {
+    App.toast('Ralat tidak dijangka. Sila muat semula halaman jika paparan tidak berubah.', 'ralat');
+  });
+
+  App.mula = function () {
+    var el = doc.getElementById('paparan');
+    App.kosongkan(el).appendChild(App.spinner('Mengesahkan sesi...'));
+    App.api('api_whoami').then(function (res) {
+      if (!res.ok) {
+        if (res.kod !== 'TIADA_KEBENARAN') {
+          App.kosongkan(el).appendChild(App.banner('ralat-b', res.mesej || 'Sistem tidak tersedia.'));
+        }
+        return;
+      }
+      App.sesi = res;
+      doc.getElementById('nama').textContent = res.nama;
+      Array.prototype.forEach.call(doc.querySelectorAll('nav.menu a[data-nav]'), function (a) {
+        a.addEventListener('click', function (e) { e.preventDefault(); App.pergi(a.getAttribute('href')); });
+      });
+      global.addEventListener('hashchange', App.lukis);
+      App.lukis();
+    });
+  };
+})(window);
+</script>

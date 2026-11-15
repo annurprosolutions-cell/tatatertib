@@ -1,0 +1,152 @@
+<script>
+/* S-06 Dashboard. Chart.js dimuat dari CDN. Jika CDN disekat, carta jadi bar ringkas dan jadual angka tetap ada. */
+(function (global) {
+  'use strict';
+  var App = global.App;
+  var h = App.h;
+  var MAKS_BAR = 15;
+
+  var pluginNilai = {
+    id: 'nilaiHujung',
+    afterDatasetsDraw: function (chart) {
+      var ctx = chart.ctx;
+      ctx.save();
+      ctx.font = '600 12px "Noto Sans", system-ui, Arial, sans-serif';
+      ctx.fillStyle = '#1C1C1C';
+      ctx.textBaseline = 'middle';
+      chart.getDatasetMeta(0).data.forEach(function (bar, i) {
+        ctx.fillText(String(chart.data.datasets[0].data[i]), bar.x + 6, bar.y);
+      });
+      ctx.restore();
+    }
+  };
+
+  /* Papar yang teratas sahaja dalam carta; selebihnya digabung supaya jumlah kekal sama. Jadual menunjukkan semua. */
+  function untukCarta(data) {
+    if (data.length <= MAKS_BAR) return data;
+    var atas = data.slice(0, MAKS_BAR - 1);
+    var baki = data.slice(MAKS_BAR - 1);
+    atas.push({ label: 'Lain-lain (' + baki.length + ' nilai)', kiraan: baki.reduce(function (a, x) { return a + x.kiraan; }, 0) });
+    return atas;
+  }
+
+  function jadualAngka(data, jumlah) {
+    var tbody = h('tbody');
+    data.forEach(function (d) {
+      tbody.appendChild(h('tr', null,
+        h('td', { 'data-label': 'Nilai' }, d.label),
+        h('td', { class: 'nombor', 'data-label': 'Bilangan' }, String(d.kiraan)),
+        h('td', { class: 'nombor', 'data-label': 'Peratus' }, jumlah ? (d.kiraan / jumlah * 100).toFixed(1) + '%' : '-')));
+    });
+    tbody.appendChild(h('tr', null,
+      h('td', { 'data-label': 'Nilai', class: 'tebal' }, 'Jumlah'),
+      h('td', { class: 'nombor tebal', 'data-label': 'Bilangan' }, String(jumlah)),
+      h('td', { class: 'nombor', 'data-label': 'Peratus' }, '')));
+    return h('div', { class: 'jadual-bungkus' }, h('table', { class: 'data' },
+      h('thead', null, h('tr', null, h('th', { scope: 'col' }, 'Nilai'), h('th', { scope: 'col', class: 'nombor' }, 'Bilangan'), h('th', { scope: 'col', class: 'nombor' }, 'Peratus'))),
+      tbody));
+  }
+
+  function barCss(data) {
+    var maks = data.reduce(function (m, x) { return Math.max(m, x.kiraan); }, 1);
+    var kotak = h('div', { class: 'bar-css', role: 'img', 'aria-label': 'Carta bar ringkas' });
+    data.forEach(function (d) {
+      kotak.appendChild(h('div', null, d.label));
+      kotak.appendChild(h('div', null, h('div', { class: 'bar', style: 'width:' + Math.max(d.kiraan / maks * 100, 1) + '%' })));
+      kotak.appendChild(h('div', { class: 'tebal' }, String(d.kiraan)));
+    });
+    return kotak;
+  }
+
+  App.views.dashboard = function (c) {
+    var tahun = App.state.dashTahun || '';
+    var carta = [];
+    App.bersihkanNanti(function () { carta.forEach(function (x) { x.destroy(); }); carta = []; });
+
+    var pilihTahun = h('select', { id: 'tahun', 'aria-label': 'Tapis ikut tahun', style: 'width:auto;min-width:160px' });
+    var kandungan = h('div', { id: 'kandungan-dash' });
+    c.el.appendChild(App.tajuk('Dashboard', 'Statistik rekod tatatertib', h('div', null,
+      h('label', { for: 'tahun', class: 'caption', style: 'margin-bottom:2px' }, 'Tahun'), pilihTahun)));
+    c.el.appendChild(kandungan);
+
+    pilihTahun.addEventListener('change', function () {
+      tahun = pilihTahun.value;
+      App.state.dashTahun = tahun;
+      muat();
+    });
+
+    function muat() {
+      carta.forEach(function (x) { x.destroy(); });
+      carta = [];
+      App.kosongkan(kandungan).appendChild(App.spinner('Mengira statistik...'));
+      App.api('api_dashboard', tahun).then(function (d) {
+        if (!c.aktif()) return;
+        App.kosongkan(kandungan);
+        if (!d.ok) { kandungan.appendChild(App.banner('ralat-b', d.mesej)); return; }
+
+        App.kosongkan(pilihTahun);
+        pilihTahun.appendChild(h('option', { value: '' }, 'Semua tahun'));
+        d.senaraiTahun.forEach(function (t) { pilihTahun.appendChild(h('option', { value: t }, t)); });
+        pilihTahun.value = d.tahun;
+
+        if (d.jumlahSemua === 0) {
+          kandungan.appendChild(App.kosong('Belum ada rekod.', h('a', { href: '#/tambah', class: 'btn btn-primary' }, 'Tambah rekod')));
+          return;
+        }
+        kandungan.appendChild(h('div', { class: 'jubin sempit' },
+          h('div', { class: 'kad' }, h('div', { class: 'angka', id: 'jumlah-rekod' }, String(d.jumlah)),
+            h('div', { class: 'caption' }, d.tahun ? 'Rekod tahun ' + d.tahun : 'Jumlah rekod (semua tahun)')),
+          d.tahun ? h('div', { class: 'kad' }, h('div', { class: 'angka' }, String(d.jumlahSemua)), h('div', { class: 'caption' }, 'Jumlah semua tahun')) : null));
+
+        var grid = h('div', { class: 'carta-grid' });
+        kandungan.appendChild(grid);
+        var tempat = [];
+        d.carta.forEach(function (ct) {
+          var kotak = h('div', { class: 'carta-kotak' });
+          var butiran = h('details', { class: 'angka-jadual' }, h('summary', null, 'Lihat angka (' + ct.data.length + ' nilai)'), jadualAngka(ct.data, d.jumlah));
+          grid.appendChild(h('section', { class: 'card', 'data-carta': ct.kunci }, h('h2', null, ct.tajuk), kotak, butiran));
+          tempat.push({ ct: ct, kotak: kotak, butiran: butiran });
+        });
+        if (d.jumlah === 0) {
+          tempat.forEach(function (t) { t.kotak.appendChild(h('p', { class: 'caption' }, 'Tiada rekod untuk tahun ini.')); });
+          return;
+        }
+
+        App.muatChart().then(function (ok) {
+          if (!c.aktif()) return;
+          tempat.forEach(function (t) {
+            var data = untukCarta(t.ct.data);
+            if (!ok || !global.Chart) {
+              t.kotak.appendChild(barCss(data));
+              t.butiran.open = true;
+              return;
+            }
+            t.kotak.style.height = Math.max(120, data.length * 30 + 48) + 'px';
+            var kanvas = h('canvas', { role: 'img', 'aria-label': t.ct.tajuk + ': ' + data.map(function (x) { return x.label + ' ' + x.kiraan; }).join(', ') });
+            t.kotak.appendChild(kanvas);
+            carta.push(new global.Chart(kanvas.getContext('2d'), {
+              type: 'bar',
+              data: {
+                labels: data.map(function (x) { return x.label; }),
+                datasets: [{ data: data.map(function (x) { return x.kiraan; }), backgroundColor: '#1F3A5F', borderRadius: 2, barThickness: 18 }]
+              },
+              options: {
+                indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: false,
+                plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (i) {
+                  return i.parsed.x + ' rekod (' + (d.jumlah ? (i.parsed.x / d.jumlah * 100).toFixed(1) : 0) + '%)';
+                } } } },
+                scales: {
+                  x: { beginAtZero: true, grace: '12%', ticks: { precision: 0, color: '#4A6A8A' }, grid: { color: '#E3E6EA' } },
+                  y: { ticks: { autoSkip: false, color: '#1C1C1C' }, grid: { display: false } }
+                }
+              },
+              plugins: [pluginNilai]
+            }));
+          });
+        });
+      });
+    }
+    muat();
+  };
+})(window);
+</script>

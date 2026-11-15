@@ -1,0 +1,115 @@
+<script>
+/* S-08 Audit log (baca sahaja). Diisi oleh server; tiada kawalan untuk edit atau padam. */
+(function (global) {
+  'use strict';
+  var App = global.App;
+  var h = App.h;
+  var TINDAKAN = ['CARIAN', 'LIHAT', 'TAMBAH', 'KEMAS_KINI', 'CETAK_OPR', 'LOG_MASUK', 'AKSES_DITOLAK'];
+
+  function pad(n) { n = String(n); return n.length < 2 ? '0' + n : n; }
+
+  /* DD/MM/YYYY (atau D/M/YYYY) -> YYYY-MM-DD untuk server. Kosong dibenarkan. */
+  function keIso(teks) {
+    var t = String(teks || '').trim();
+    if (t === '') return { ok: true, iso: '' };
+    var m = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/.exec(t);
+    if (!m) return { ok: false };
+    var y = +m[3], mo = +m[2], d = +m[1];
+    var x = new Date(Date.UTC(y, mo - 1, d));
+    if (y < 1900 || y > 2100 || x.getUTCFullYear() !== y || x.getUTCMonth() !== mo - 1 || x.getUTCDate() !== d) return { ok: false };
+    return { ok: true, iso: y + '-' + pad(mo) + '-' + pad(d) };
+  }
+
+  App.views.audit = function (c) {
+    var s = App.state.audit || { tapis: { tindakan: '', emel: '', kata: '', dari: '', hingga: '' }, halaman: 1 };
+    App.state.audit = s;
+
+    var fTindakan = h('select', { id: 'a-tindakan', name: 'tindakan' }, h('option', { value: '' }, 'Semua tindakan'),
+      TINDAKAN.map(function (t) { return h('option', { value: t }, t); }));
+    var fEmel = h('input', { type: 'text', id: 'a-emel', name: 'emel', autocomplete: 'off', placeholder: 'Contoh: ahmad@' });
+    var fKata = h('input', { type: 'text', id: 'a-kata', name: 'kata', autocomplete: 'off', placeholder: 'Kata carian atau ID rekod' });
+    var fDari = h('input', { type: 'text', id: 'a-dari', name: 'dari', placeholder: 'DD/MM/YYYY', inputmode: 'numeric', maxlength: '10', autocomplete: 'off', 'aria-describedby': 'ralat-dari' });
+    var fHingga = h('input', { type: 'text', id: 'a-hingga', name: 'hingga', placeholder: 'DD/MM/YYYY', inputmode: 'numeric', maxlength: '10', autocomplete: 'off', 'aria-describedby': 'ralat-hingga' });
+    var rDari = h('div', { class: 'ralat', id: 'ralat-dari', role: 'alert' });
+    var rHingga = h('div', { class: 'ralat', id: 'ralat-hingga', role: 'alert' });
+    fTindakan.value = s.tapis.tindakan; fEmel.value = s.tapis.emel; fKata.value = s.tapis.kata;
+    fDari.value = s.tapis.dari; fHingga.value = s.tapis.hingga;
+
+    var hasilEl = h('div', { 'aria-live': 'polite' });
+    function medan(label, ctrl, id, ralat) { return h('div', { class: 'medan' }, h('label', { for: id }, label), ctrl, ralat || null); }
+
+    var form = h('form', {
+      novalidate: true,
+      onsubmit: function (e) {
+        e.preventDefault();
+        var d1 = keIso(fDari.value);
+        var d2 = keIso(fHingga.value);
+        rDari.textContent = d1.ok ? '' : 'Tarikh mesti dalam format DD/MM/YYYY';
+        rHingga.textContent = d2.ok ? '' : 'Tarikh mesti dalam format DD/MM/YYYY';
+        if (d1.ok) fDari.removeAttribute('aria-invalid'); else fDari.setAttribute('aria-invalid', 'true');
+        if (d2.ok) fHingga.removeAttribute('aria-invalid'); else fHingga.setAttribute('aria-invalid', 'true');
+        if (!d1.ok || !d2.ok) { (d1.ok ? fHingga : fDari).focus(); return; }
+        s.tapis = { tindakan: fTindakan.value, emel: fEmel.value.trim(), kata: fKata.value.trim(), dari: fDari.value.trim(), hingga: fHingga.value.trim() };
+        s.halaman = 1;
+        muat();
+      }
+    },
+    h('div', { class: 'grid-borang' },
+      medan('Tindakan', fTindakan, 'a-tindakan'), medan('Emel admin', fEmel, 'a-emel'),
+      medan('Dari tarikh', fDari, 'a-dari', rDari), medan('Hingga tarikh', fHingga, 'a-hingga', rHingga),
+      h('div', { class: 'medan lebar' }, h('label', { for: 'a-kata' }, 'Kata kunci (butiran atau ID rekod)'), fKata)),
+    h('div', { class: 'bar-butang' },
+      h('button', { type: 'submit', class: 'btn btn-primary' }, 'Tapis'),
+      h('button', {
+        type: 'button', class: 'btn btn-secondary',
+        onclick: function () {
+          s.tapis = { tindakan: '', emel: '', kata: '', dari: '', hingga: '' }; s.halaman = 1;
+          fTindakan.value = ''; fEmel.value = ''; fKata.value = ''; fDari.value = ''; fHingga.value = '';
+          rDari.textContent = ''; rHingga.textContent = '';
+          fDari.removeAttribute('aria-invalid'); fHingga.removeAttribute('aria-invalid');
+          muat();
+        }
+      }, 'Set semula')));
+
+    c.el.appendChild(App.tajuk('Audit log', 'Rekod carian, paparan, perubahan dan cetakan. Hanya boleh dibaca.'));
+    c.el.appendChild(h('section', { class: 'card' }, form));
+    c.el.appendChild(hasilEl);
+
+    function lencanaTindakan(t) {
+      return h('span', { class: 'lencana ' + (t === 'AKSES_DITOLAK' ? 'merah' : (t === 'CETAK_OPR' || t === 'KEMAS_KINI' || t === 'TAMBAH' ? 'hijau' : 'kelabu')) }, t);
+    }
+
+    function muat() {
+      App.kosongkan(hasilEl).appendChild(App.spinner('Memuatkan log...'));
+      var tapis = Object.assign({ halaman: s.halaman }, s.tapis, { dari: keIso(s.tapis.dari).iso || '', hingga: keIso(s.tapis.hingga).iso || '' });
+      App.api('api_auditLog', tapis).then(function (res) {
+        if (!c.aktif()) return;
+        App.kosongkan(hasilEl);
+        if (!res.ok) { hasilEl.appendChild(App.banner('ralat-b', res.mesej)); return; }
+        s.halaman = res.halaman;
+        if (res.jumlah === 0) { hasilEl.appendChild(App.kosong('Tiada entri log yang sepadan.')); return; }
+        hasilEl.appendChild(h('p', { class: 'ringkasan-hasil' }, res.jumlah + ' entri, terbaru dahulu.'));
+        var tbody = h('tbody');
+        res.baris.forEach(function (b) {
+          tbody.appendChild(h('tr', null,
+            h('td', { 'data-label': 'Masa', class: 'nowrap' }, b.masa),
+            h('td', { 'data-label': 'Admin', class: 'nowrap' }, b.emel),
+            h('td', { 'data-label': 'Tindakan' }, lencanaTindakan(b.tindakan)),
+            h('td', { 'data-label': 'Rekod' }, b.rekod_id ? h('a', { href: '#/rekod/' + App.enc(b.rekod_id) }, b.namaRekod || 'Buka rekod') : '-'),
+            h('td', { 'data-label': 'Butiran' }, App.teks(b.butiran))));
+        });
+        hasilEl.appendChild(h('div', { class: 'jadual-bungkus' }, h('table', { class: 'data', id: 'jadual-audit' },
+          h('thead', null, h('tr', null, ['Masa', 'Admin', 'Tindakan', 'Rekod', 'Butiran'].map(function (t) { return h('th', { scope: 'col' }, t); }))),
+          tbody)));
+        if (res.jumlahHalaman > 1) {
+          hasilEl.appendChild(h('nav', { class: 'halaman', 'aria-label': 'Halaman audit log' },
+            h('button', { type: 'button', class: 'btn btn-secondary btn-kecil', disabled: res.halaman <= 1, onclick: function () { s.halaman--; muat(); } }, 'Sebelum'),
+            h('span', null, 'Halaman ' + res.halaman + ' daripada ' + res.jumlahHalaman),
+            h('button', { type: 'button', class: 'btn btn-secondary btn-kecil', disabled: res.halaman >= res.jumlahHalaman, onclick: function () { s.halaman++; muat(); } }, 'Seterusnya')));
+        }
+      });
+    }
+    muat();
+  };
+})(window);
+</script>

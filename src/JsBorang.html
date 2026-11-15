@@ -1,0 +1,238 @@
+<script>
+/* S-05 Borang tambah / edit rekod (13 medan). Validasi di sini hanya untuk kemudahan; server menyemak semula. */
+(function (global) {
+  'use strict';
+  var App = global.App;
+  var h = App.h;
+
+  function pad(n) { n = String(n); return n.length < 2 ? '0' + n : n; }
+
+  function normalTarikh(v) {
+    var m = /^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{4})$/.exec(String(v).trim());
+    return m ? pad(m[1]) + '/' + pad(m[2]) + '/' + m[3] : v;
+  }
+
+  function tarikhSah(t) {
+    var m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(t);
+    if (!m) return 'Tarikh mesti dalam format DD/MM/YYYY';
+    var y = +m[3], mo = +m[2], d = +m[1];
+    var x = new Date(Date.UTC(y, mo - 1, d));
+    if (y < 1900 || y > 2100 || x.getUTCFullYear() !== y || x.getUTCMonth() !== mo - 1 || x.getUTCDate() !== d) return 'Tarikh tidak sah';
+    return '';
+  }
+
+  /* Cermin peraturan di server (Records.gs sahkanRekod_). */
+  function sahkanMedan(def, nilai, meta) {
+    var t = String(nilai === undefined || nilai === null ? '' : nilai);
+    if (def.jenis === 'ic') t = t.replace(/[\s-]/g, '');
+    else if (def.jenis === 'textarea') t = t.trim();
+    else t = t.replace(/\s+/g, ' ').trim();
+    if (t === '') return def.wajib ? def.label + ' wajib diisi' : '';
+    if (def.jenis === 'ic') return /^\d{12}$/.test(t) ? '' : 'IC mesti 12 digit';
+    if (def.jenis === 'tahun') {
+      if (!/^\d{4}$/.test(t)) return 'Tahun mesti 4 digit';
+      if (+t < meta.tahunMin || +t > meta.tahunMaks) return 'Tahun mesti antara ' + meta.tahunMin + ' dan ' + meta.tahunMaks;
+      return '';
+    }
+    if (def.jenis === 'tarikh') return tarikhSah(t);
+    if (def.jenis === 'pilihan') {
+      var p = meta.pilihan[def.key];
+      if (p.disahkan) {
+        var ada = p.senarai.some(function (n) { return n.toLowerCase() === t.toLowerCase(); });
+        return ada ? '' : '"' + t + '" tiada dalam senarai ' + def.label.toLowerCase();
+      }
+      return t.length > 200 ? 'Maksimum 200 aksara' : '';
+    }
+    if (def.maks && t.length > def.maks) return 'Maksimum ' + def.maks + ' aksara';
+    return '';
+  }
+
+  function binaMedan(def, meta, rek) {
+    var idEl = 'f-' + def.key;
+    var ralatEl = h('div', { class: 'ralat', id: 'ralat-' + def.key, role: 'alert' });
+    var awal = rek ? String(rek[def.key] || '') : (def.lalai || '');
+    var kawalan;
+    var bantuan = null;
+
+    if (def.jenis === 'textarea') {
+      kawalan = h('textarea', { id: idEl, name: def.key, rows: '5', maxlength: String(def.maks || 2000) });
+      kawalan.value = awal;
+      bantuan = h('div', { class: 'bantuan' }, 'Tidak dipaparkan dalam OPR.');
+    } else if (def.jenis === 'pilihan') {
+      var p = meta.pilihan[def.key];
+      if (p.disahkan) {
+        kawalan = h('select', { id: idEl, name: def.key });
+        kawalan.appendChild(h('option', { value: '' }, '- Pilih -'));
+        var padan = null;
+        p.senarai.forEach(function (n) {
+          kawalan.appendChild(h('option', { value: n }, n));
+          if (n.toLowerCase() === awal.toLowerCase()) padan = n;
+        });
+        if (awal && !padan) kawalan.appendChild(h('option', { value: awal }, awal + ' (tiada dalam senarai)'));
+        kawalan.value = padan || awal;
+      } else {
+        var dl = 'dl-' + def.key;
+        kawalan = h('input', { type: 'text', id: idEl, name: def.key, list: dl, autocomplete: 'off', maxlength: '200' });
+        kawalan.value = awal;
+        bantuan = h('div', null,
+          h('div', { class: 'bantuan' }, 'Taip atau pilih daripada cadangan.'),
+          h('datalist', { id: dl }, p.senarai.map(function (n) { return h('option', { value: n }); })));
+      }
+    } else {
+      kawalan = h('input', { type: 'text', id: idEl, name: def.key, autocomplete: 'off' });
+      if (def.jenis === 'ic') { kawalan.setAttribute('inputmode', 'numeric'); kawalan.setAttribute('maxlength', '14'); kawalan.setAttribute('placeholder', '12 digit tanpa sengkang'); }
+      else if (def.jenis === 'tahun') { kawalan.setAttribute('inputmode', 'numeric'); kawalan.setAttribute('maxlength', '4'); kawalan.setAttribute('placeholder', 'YYYY'); }
+      else if (def.jenis === 'tarikh') { kawalan.setAttribute('inputmode', 'numeric'); kawalan.setAttribute('maxlength', '10'); kawalan.setAttribute('placeholder', 'DD/MM/YYYY'); }
+      else kawalan.setAttribute('maxlength', String(def.maks || 200));
+      kawalan.value = awal;
+    }
+    kawalan.setAttribute('aria-describedby', 'ralat-' + def.key);
+    if (def.wajib) kawalan.setAttribute('aria-required', 'true');
+
+    var m = {
+      def: def, kawalan: kawalan, ralatEl: ralatEl, sentuh: false,
+      el: h('div', { class: 'medan' + (def.jenis === 'textarea' ? ' lebar' : '') },
+        h('label', { for: idEl }, def.label, def.wajib ? h('span', { class: 'wajib', 'aria-hidden': 'true' }, ' *') : null),
+        kawalan, bantuan, ralatEl)
+    };
+    m.papar = function (mesej) {
+      m.ralatEl.textContent = mesej || '';
+      if (mesej) m.kawalan.setAttribute('aria-invalid', 'true'); else m.kawalan.removeAttribute('aria-invalid');
+    };
+    kawalan.addEventListener('input', function () {
+      m.sentuh = true;
+      if (m.ralatEl.textContent) m.papar(sahkanMedan(def, kawalan.value, meta));
+    });
+    kawalan.addEventListener('change', function () { m.sentuh = true; });
+    kawalan.addEventListener('blur', function () {
+      if (def.jenis === 'ic') kawalan.value = kawalan.value.replace(/[\s-]/g, '');
+      if (def.jenis === 'tarikh') kawalan.value = normalTarikh(kawalan.value);
+      if (m.sentuh || kawalan.value !== '') m.papar(sahkanMedan(def, kawalan.value, meta));
+    });
+    return m;
+  }
+
+  function muatMeta() {
+    if (App.state.meta) return Promise.resolve(App.state.meta);
+    return App.api('api_borangMeta').then(function (res) { if (res.ok) App.state.meta = res; return res; });
+  }
+
+  /* Kekalkan senarai carian yang sedang dipaparkan selepas simpan. */
+  function kemasKiniCari(rk) {
+    var s = App.state.cari;
+    if (!s || !s.hasil || !s.hasil.hasil) return;
+    s.hasil.hasil.forEach(function (x) {
+      if (x.id === rk.id) {
+        ['nama', 'ic', 'gred', 'negeri', 'tahun', 'salahlaku', 'keputusan_tatatertib', 'status_semasa'].forEach(function (k) { x[k] = rk[k]; });
+      }
+    });
+  }
+
+  function borang(c, id) {
+    var edit = !!id;
+    c.el.appendChild(App.tajuk(edit ? 'Edit rekod' : 'Tambah rekod'));
+    c.el.appendChild(App.spinner('Memuatkan borang...'));
+    var rekodJanji = !edit ? Promise.resolve(null)
+      : (App.state.rekod[id] ? Promise.resolve({ ok: true, rekod: App.state.rekod[id] }) : App.api('api_lihatRekod', id));
+
+    Promise.all([muatMeta(), rekodJanji]).then(function (hasil) {
+      if (!c.aktif()) return;
+      var meta = hasil[0];
+      var rr = hasil[1];
+      App.kosongkan(c.el);
+      if (!meta.ok || (edit && !rr.ok)) {
+        c.el.appendChild(App.tajuk(edit ? 'Edit rekod' : 'Tambah rekod', null, h('a', { href: '#/cari', class: 'btn btn-secondary' }, 'Kembali')));
+        c.el.appendChild(App.banner('ralat-b', (!meta.ok ? meta.mesej : rr.mesej) || 'Borang tidak dapat dimuatkan.'));
+        return;
+      }
+      var rek = rr ? rr.rekod : null;
+      c.el.appendChild(App.tajuk(edit ? 'Edit rekod' : 'Tambah rekod', edit ? rek.nama : null));
+
+      var bannerEl = h('div', { id: 'banner-borang', 'aria-live': 'polite' });
+      var peta = {};
+      var grid = h('div', { class: 'grid-borang' });
+      meta.medan.forEach(function (def) {
+        peta[def.key] = binaMedan(def, meta, rek);
+        grid.appendChild(peta[def.key].el);
+      });
+      var simpanTeks = edit ? 'Simpan perubahan' : 'Simpan rekod';
+      var simpanBtn = h('button', { type: 'submit', class: 'btn btn-primary' }, simpanTeks);
+      var batal = h('a', { href: edit ? '#/rekod/' + App.enc(id) : '#/cari', class: 'btn btn-secondary' }, 'Batal');
+      var form = h('form', { novalidate: true, onsubmit: hantar }, bannerEl, grid, h('div', { class: 'bar-butang' }, simpanBtn, batal));
+      c.el.appendChild(h('section', { class: 'card' }, h('p', { class: 'caption' }, 'Medan bertanda * wajib diisi.'), form));
+      var tajuk = c.el.querySelector('h1');
+      if (tajuk) tajuk.focus({ preventScroll: true });
+
+      function paparRalat(ralat) {
+        var pertama = null;
+        meta.medan.forEach(function (def) {
+          var msg = ralat[def.key] || '';
+          peta[def.key].papar(msg);
+          if (msg && !pertama) pertama = peta[def.key];
+        });
+        return pertama;
+      }
+
+      function hantar(e) {
+        e.preventDefault();
+        App.kosongkan(bannerEl);
+        var payload = {};
+        var ralat = {};
+        meta.medan.forEach(function (def) {
+          var v = peta[def.key].kawalan.value;
+          if (def.jenis === 'ic') v = v.replace(/[\s-]/g, '');
+          if (def.jenis === 'tarikh') v = normalTarikh(v);
+          peta[def.key].kawalan.value = v;
+          payload[def.key] = v;
+          var msg = sahkanMedan(def, v, meta);
+          if (msg) ralat[def.key] = msg;
+        });
+        var pertama = paparRalat(ralat);
+        if (pertama) {
+          var n = Object.keys(ralat).length;
+          bannerEl.appendChild(App.banner('ralat-b', 'Sila betulkan ' + n + ' medan yang bertanda.'));
+          pertama.kawalan.focus();
+          return;
+        }
+        if (edit) { payload.id = id; payload.versi = rek.versi; }
+        simpanBtn.disabled = true;
+        simpanBtn.textContent = 'Menyimpan...';
+        App.api('api_simpanRekod', payload).then(function (res) {
+          if (!c.aktif()) return;
+          simpanBtn.disabled = false;
+          simpanBtn.textContent = simpanTeks;
+          if (res.ok) {
+            var rk = res.rekod;
+            App.state.meta = null;               // cadangan dropdown mungkin berubah
+            App.state.rekod[rk.id] = rk;
+            if (res.baru && App.sesi) App.sesi.jumlahRekod = (App.sesi.jumlahRekod || 0) + 1;
+            kemasKiniCari(rk);
+            App.toast(res.tiadaUbah ? 'Tiada perubahan untuk disimpan' : 'Rekod disimpan');
+            App.pergi('#/rekod/' + App.enc(rk.id));
+            return;
+          }
+          if (res.kod === 'VALIDASI' && res.ralat) {
+            var p1 = paparRalat(res.ralat);
+            if (res.duplikatId && peta.ic.ralatEl.textContent) {
+              peta.ic.ralatEl.appendChild(doc().createTextNode(' '));
+              peta.ic.ralatEl.appendChild(h('a', { href: '#/rekod/' + App.enc(res.duplikatId) }, 'Buka rekod itu'));
+            }
+            bannerEl.appendChild(App.banner('ralat-b', res.mesej));
+            if (p1) p1.kawalan.focus();
+          } else if (res.kod === 'KONFLIK') {
+            bannerEl.appendChild(App.banner('amaran-b', h('div', null, res.mesej, ' ',
+              h('button', { type: 'button', class: 'btn btn-secondary btn-kecil', onclick: function () { delete App.state.rekod[id]; App.lukis(); } }, 'Muat semula rekod'))));
+          } else {
+            bannerEl.appendChild(App.banner('ralat-b', res.mesej || 'Rekod tidak dapat disimpan.'));
+          }
+        });
+      }
+    });
+  }
+
+  function doc() { return global.document; }
+
+  App.views.tambah = function (c) { borang(c, null); };
+  App.views.borang = function (c, id) { borang(c, id); };
+})(window);
+</script>

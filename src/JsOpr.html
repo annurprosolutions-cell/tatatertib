@@ -1,0 +1,80 @@
+<script>
+/* S-07 Pratonton dan cetak OPR. PDF dijana di server hanya bila admin menekan "Jana PDF" (satu klik = satu fail + satu baris audit). */
+(function (global) {
+  'use strict';
+  var App = global.App;
+  var h = App.h;
+
+  var MEDAN_OPR = [['Nama', 'nama'], ['No. kad pengenalan', 'ic'], ['Gred', 'gred'], ['Skim', 'skim'], ['Tempat bertugas', 'tpt_bertugas'],
+    ['Negeri', 'negeri'], ['Salah laku', 'salahlaku'], ['Tahun', 'tahun'], ['Keputusan tatatertib', 'keputusan_tatatertib'],
+    ['Tarikh kuat kuasa', 'tarikh_kuatkuasa'], ['Rayuan', 'rayuan_tatatertib'], ['Status semasa', 'status_semasa']];
+
+  function base64KeBlob(b64) {
+    var bin = global.atob(b64);
+    var u8 = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return new global.Blob([u8], { type: 'application/pdf' });
+  }
+
+  App.views.opr = function (c) {
+    var id = c.param[0];
+    if (!id) { App.pergi('#/cari'); return; }
+    c.el.appendChild(App.spinner('Memuatkan rekod...'));
+    var janji = App.state.rekod[id] ? Promise.resolve({ ok: true, rekod: App.state.rekod[id] }) : App.api('api_lihatRekod', id);
+
+    janji.then(function (res) {
+      if (!c.aktif()) return;
+      App.kosongkan(c.el);
+      if (!res.ok) {
+        c.el.appendChild(App.tajuk('Cetak OPR', null, h('a', { href: '#/cari', class: 'btn btn-secondary' }, 'Kembali ke carian')));
+        c.el.appendChild(App.banner('ralat-b', res.mesej));
+        return;
+      }
+      var r = res.rekod;
+      App.state.rekod[r.id] = r;
+
+      c.el.appendChild(App.tajuk('Cetak OPR', r.nama,
+        h('a', { href: '#/rekod/' + App.enc(r.id), class: 'btn btn-secondary' }, 'Kembali ke rekod')));
+
+      var dl = h('dl', { class: 'kv' });
+      MEDAN_OPR.forEach(function (m) { dl.appendChild(h('dt', null, m[0])); dl.appendChild(h('dd', null, App.teks(r[m[1]]))); });
+
+      var kawasan = h('div', { id: 'kawasan-pdf', 'aria-live': 'polite' });
+      var jana = h('button', { type: 'button', class: 'btn btn-primary', id: 'btn-jana' }, 'Jana PDF');
+
+      c.el.appendChild(h('section', { class: 'card' },
+        h('h2', null, 'Pratonton maklumat OPR'),
+        dl,
+        h('p', { class: 'caption', style: 'margin-top:16px' }, 'Butiran kes tidak dimasukkan dalam OPR. Ruang tandatangan dan cop dibiarkan kosong untuk tandatangan fizikal.'),
+        h('div', { class: 'bar-butang' }, jana)));
+      c.el.appendChild(kawasan);
+
+      jana.addEventListener('click', function () {
+        jana.disabled = true;
+        App.kosongkan(kawasan).appendChild(App.spinner('Menjana PDF. Ini boleh mengambil beberapa saat...'));
+        App.api('api_janaOpr', r.id).then(function (hasil) {
+          if (!c.aktif()) return;
+          jana.disabled = false;
+          App.kosongkan(kawasan);
+          if (!hasil.ok) { kawasan.appendChild(App.banner('ralat-b', hasil.mesej)); return; }
+          jana.textContent = 'Jana PDF semula';
+          var blob = base64KeBlob(hasil.pdfBase64);
+          var url = global.URL.createObjectURL(blob);
+          App.bersihkanNanti(function () { global.URL.revokeObjectURL(url); });
+          kawasan.appendChild(App.banner('ok-b', 'PDF dijana dan disimpan dalam folder OPR: ' + hasil.namaFail));
+          kawasan.appendChild(h('div', { class: 'bar-butang', style: 'margin-top:0;margin-bottom:16px' },
+            h('button', { type: 'button', class: 'btn btn-primary', id: 'btn-muat-turun', onclick: function () { App.muatTurunBlob(hasil.namaFail, blob); } }, 'Muat turun'),
+            h('button', {
+              type: 'button', class: 'btn btn-secondary', id: 'btn-cetak',
+              onclick: function () {
+                var w = global.open(url, '_blank');
+                if (!w) App.toast('Tab baharu disekat penyemak imbas. Guna Muat turun.', 'ralat');
+              }
+            }, 'Buka untuk cetak')));
+          kawasan.appendChild(h('iframe', { class: 'pdf-bingkai', src: url, title: 'Pratonton PDF OPR' }));
+        });
+      });
+    });
+  };
+})(window);
+</script>

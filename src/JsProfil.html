@@ -1,0 +1,66 @@
+<script>
+/* S-04 Profil rekod (lihat). Edit dikendalikan oleh JsBorang. */
+(function (global) {
+  'use strict';
+  var App = global.App;
+  var h = App.h;
+
+  function kv(pasangan) {
+    var dl = h('dl', { class: 'kv' });
+    pasangan.forEach(function (p) {
+      dl.appendChild(h('dt', null, p[0]));
+      dl.appendChild(h('dd', { class: p[2] ? 'teks-panjang' : null }, p[1]));
+    });
+    return dl;
+  }
+
+  App.views.rekod = function (c) {
+    var id = c.param[0];
+    if (c.param[1] === 'edit') { App.views.borang(c, id); return; }
+    if (!id) { App.pergi('#/cari'); return; }
+
+    c.el.appendChild(App.spinner('Memuatkan rekod...'));
+    App.api('api_lihatRekod', id).then(function (res) {
+      if (!c.aktif()) return;
+      App.kosongkan(c.el);
+      if (!res.ok) {
+        c.el.appendChild(App.tajuk('Rekod tidak dapat dibuka', null,
+          h('a', { href: '#/cari', class: 'btn btn-secondary' }, 'Kembali ke carian')));
+        c.el.appendChild(App.banner('ralat-b', res.mesej));
+        return;
+      }
+      var r = res.rekod;
+      App.state.rekod[r.id] = r;
+      var pid = App.enc(r.id);
+
+      c.el.appendChild(App.tajuk(r.nama, 'No. IC ' + r.ic, [
+        h('a', { href: '#/cari', class: 'btn btn-secondary' }, 'Kembali'),
+        h('a', { href: '#/rekod/' + pid + '/edit', class: 'btn btn-secondary' }, 'Edit'),
+        h('a', { href: '#/opr/' + pid, class: 'btn btn-primary' }, 'Jana OPR')
+      ]));
+
+      c.el.appendChild(h('div', { class: 'grid-2' },
+        h('section', { class: 'card' }, h('h2', null, 'Maklumat pegawai'), kv([
+          ['Nama', App.teks(r.nama)], ['No. kad pengenalan', App.teks(r.ic)], ['Gred', App.teks(r.gred)],
+          ['Skim', App.teks(r.skim)], ['Tempat bertugas', App.teks(r.tpt_bertugas)], ['Negeri', App.teks(r.negeri)]
+        ])),
+        h('section', { class: 'card' }, h('h2', null, 'Maklumat kes'), kv([
+          ['Tahun', App.teks(r.tahun)], ['Salah laku', App.teks(r.salahlaku)],
+          ['Keputusan tatatertib', App.teks(r.keputusan_tatatertib)], ['Tarikh kuat kuasa', App.teks(r.tarikh_kuatkuasa)],
+          ['Rayuan', r.rayuan_tatatertib ? App.lencana(r.rayuan_tatatertib) : '-'],
+          ['Status semasa', App.lencana(r.status_semasa)]
+        ]))));
+
+      c.el.appendChild(h('section', { class: 'card' }, h('h2', null, 'Butiran kes'),
+        h('p', { class: 'caption' }, 'Tidak dimasukkan dalam OPR.'),
+        h('div', { style: 'white-space:pre-wrap;overflow-wrap:anywhere' }, App.teks(r.butiran_kes))));
+
+      c.el.appendChild(h('p', { class: 'caption' },
+        'Dicipta oleh ' + App.teks(r.created_by) + ' pada ' + App.teks(r.created_at) +
+        (r.updated_at ? '. Dikemas kini pada ' + r.updated_at + '.' : '.')));
+      var tajuk = c.el.querySelector('h1');
+      if (tajuk) tajuk.focus({ preventScroll: true });
+    });
+  };
+})(window);
+</script>

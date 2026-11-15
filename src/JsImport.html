@@ -1,0 +1,282 @@
+<script>
+/* S-09 Import data sedia ada (CSV). Aliran: pilih fail -> pemetaan lajur -> semak (tiada tulis) -> import. */
+(function (global) {
+  'use strict';
+  var App = global.App;
+  var h = App.h;
+
+  var MEDAN = [['Nama penuh', 'nama', 1], ['No. kad pengenalan', 'ic', 1], ['Gred', 'gred', 1], ['Skim', 'skim', 1],
+    ['Tempat bertugas', 'tpt_bertugas', 1], ['Negeri', 'negeri', 1], ['Salah laku', 'salahlaku', 1], ['Butiran kes', 'butiran_kes', 0],
+    ['Tahun', 'tahun', 1], ['Keputusan tatatertib', 'keputusan_tatatertib', 1], ['Tarikh kuat kuasa', 'tarikh_kuatkuasa', 1],
+    ['Rayuan tatatertib', 'rayuan_tatatertib', 0], ['Status semasa', 'status_semasa', 1]];
+  var LABEL = {};
+  MEDAN.forEach(function (m) { LABEL[m[1]] = m[0]; });
+
+  function jubin(angka, label, kelas) {
+    return h('div', { class: 'kad' }, h('div', { class: 'angka ' + (kelas || '') }, String(angka)), h('div', { class: 'caption' }, label));
+  }
+
+  App.views.import = function (c) {
+    c.el.appendChild(App.tajuk('Import data sedia ada', 'Import fail CSV ke dalam rekod tatatertib'));
+    if (!App.sesi || !App.sesi.bolehImport) {
+      c.el.appendChild(App.banner('ralat-b', 'Anda tidak dibenarkan menggunakan fungsi import.'));
+      return;
+    }
+
+    var im = { csv: '', nama: '', analisis: null, pemetaan: {}, alias: {}, cadangan: {}, opsyen: { benarkanKosong: false, padIc: false }, laporan: null, segar: false };
+
+    var s1 = h('section', { class: 'card' });
+    var s2 = h('section', { class: 'card', hidden: true });
+    var s3 = h('section', { class: 'card', hidden: true });
+    var s4 = h('section', { class: 'card', hidden: true });
+    c.el.appendChild(h('div', { class: 'langkah' }, s1, s2, s3, s4));
+
+    /* ---------- 1. fail ---------- */
+    var failInput = h('input', { type: 'file', id: 'fail-csv', accept: '.csv,.txt,text/csv,text/plain' });
+    var maklumFail = h('div', { 'aria-live': 'polite' });
+    s1.appendChild(h('h2', null, 'Pilih fail CSV'));
+    s1.appendChild(App.banner('maklumat-b', h('div', null,
+      h('p', { style: 'margin:0 0 4px' }, 'Sebelum import, buat salinan Sheet (File > Make a copy).'),
+      h('ul', null,
+        h('li', null, 'Baris pertama fail mesti nama lajur. Simpan sebagai CSV UTF-8.'),
+        h('li', null, 'Rekod sedia ada tidak diubah atau dipadam.'),
+        h('li', null, 'Baris yang IC-nya sudah wujud dilangkau dan dilaporkan, tidak dipadam atau ditimpa.')))));
+    s1.appendChild(h('label', { for: 'fail-csv' }, 'Fail CSV'));
+    s1.appendChild(failInput);
+    s1.appendChild(maklumFail);
+
+    failInput.addEventListener('change', function () {
+      var fail = failInput.files && failInput.files[0];
+      if (!fail) return;
+      App.kosongkan(maklumFail);
+      if (fail.size > 5000000) { maklumFail.appendChild(App.banner('ralat-b', 'Fail terlalu besar (maksimum 5 MB).')); return; }
+      var fr = new global.FileReader();
+      fr.onload = function () {
+        im.csv = String(fr.result || '');
+        im.nama = fail.name;
+        s2.hidden = true; s3.hidden = true; s4.hidden = true;
+        maklumFail.appendChild(App.spinner('Membaca fail...'));
+        App.api('api_importAnalisis', im.csv).then(function (res) {
+          if (!c.aktif()) return;
+          App.kosongkan(maklumFail);
+          if (!res.ok) { maklumFail.appendChild(App.banner('ralat-b', res.mesej)); return; }
+          im.analisis = res;
+          im.pemetaan = Object.assign({}, res.cadangan);
+          im.alias = {}; im.cadangan = {}; im.laporan = null; im.segar = false;
+          maklumFail.appendChild(App.banner('ok-b', fail.name + ': ' + res.jumlahBaris + ' baris data, ' + res.pengepala.length + ' lajur.'));
+          if (im.csv.indexOf('�') !== -1) {
+            maklumFail.appendChild(App.banner('amaran-b', 'Fail mungkin bukan UTF-8 (ada aksara rosak). Simpan semula sebagai CSV UTF-8 jika nama kelihatan pelik.'));
+          }
+          lukisPeta();
+        });
+      };
+      fr.onerror = function () { maklumFail.appendChild(App.banner('ralat-b', 'Fail tidak dapat dibaca.')); };
+      fr.readAsText(fail, 'UTF-8');
+    });
+
+    /* ---------- 2. pemetaan ---------- */
+    var semakBtn = h('button', { type: 'button', class: 'btn btn-primary', id: 'btn-semak' }, 'Semak data');
+    function tandaTidakSegar() {
+      im.segar = false;
+      if (im.laporan) { s4.hidden = false; lukisImportBar(); }
+    }
+
+    function lukisPeta() {
+      App.kosongkan(s2);
+      s2.hidden = false;
+      var a = im.analisis;
+      s2.appendChild(h('h2', null, 'Padankan lajur'));
+      s2.appendChild(h('p', { class: 'caption' }, 'Cadangan dibuat secara automatik berdasarkan nama lajur. Semak dan betulkan jika perlu. Nama dan No. kad pengenalan wajib dipadankan.'));
+      var tbody = h('tbody');
+      MEDAN.forEach(function (m) {
+        var sel = h('select', { id: 'peta-' + m[1], 'aria-label': 'Lajur untuk ' + m[0], class: 'kecil-input' },
+          h('option', { value: '-1' }, '- Tiada -'),
+          a.pengepala.map(function (p, i) { return h('option', { value: String(i) }, (i + 1) + '. ' + (p || '(tanpa nama)')); }));
+        sel.value = String(im.pemetaan[m[1]] === undefined ? -1 : im.pemetaan[m[1]]);
+        var contoh = h('td', { 'data-label': 'Contoh', class: 'caption' });
+        function kemasContoh() {
+          var n = parseInt(sel.value, 10);
+          contoh.textContent = n >= 0 && a.contoh[0] ? String(a.contoh[0][n] === undefined ? '' : a.contoh[0][n]).slice(0, 60) : '';
+        }
+        sel.addEventListener('change', function () { im.pemetaan[m[1]] = parseInt(sel.value, 10); kemasContoh(); tandaTidakSegar(); });
+        kemasContoh();
+        tbody.appendChild(h('tr', null,
+          h('td', { 'data-label': 'Medan' }, m[0], m[2] ? h('span', { class: 'wajib', 'aria-hidden': 'true' }, ' *') : null),
+          h('td', { 'data-label': 'Lajur dalam fail' }, sel), contoh));
+      });
+      s2.appendChild(h('div', { class: 'jadual-bungkus' }, h('table', { class: 'data peta-jadual' },
+        h('thead', null, h('tr', null, h('th', { scope: 'col' }, 'Medan'), h('th', { scope: 'col' }, 'Lajur dalam fail'), h('th', { scope: 'col' }, 'Contoh baris pertama'))), tbody)));
+
+      s2.appendChild(h('div', { style: 'margin-top:16px' },
+        h('label', { class: 'pilihan-baris' },
+          h('input', { type: 'checkbox', id: 'op-kosong', onchange: function (e) { im.opsyen.benarkanKosong = e.target.checked; tandaTidakSegar(); } }),
+          h('span', null, 'Benarkan medan wajib kosong (kecuali Nama dan IC). Rekod tidak lengkap diimport dan boleh dilengkapkan kemudian melalui Edit.')),
+        h('label', { class: 'pilihan-baris' },
+          h('input', { type: 'checkbox', id: 'op-padic', onchange: function (e) { im.opsyen.padIc = e.target.checked; tandaTidakSegar(); } }),
+          h('span', null, 'Tambah sifar di depan IC 11 digit (sifar hilang apabila fail dibuka dalam Excel).'))));
+      s2.appendChild(h('div', { class: 'bar-butang' }, semakBtn));
+    }
+
+    semakBtn.addEventListener('click', function () {
+      semakBtn.disabled = true;
+      s3.hidden = false;
+      App.kosongkan(s3).appendChild(App.spinner('Menyemak data. Tiada perubahan dibuat pada Sheet...'));
+      App.api('api_importSemak', im.csv, im.pemetaan, im.alias, im.opsyen).then(function (res) {
+        if (!c.aktif()) return;
+        semakBtn.disabled = false;
+        if (!res.ok) { App.kosongkan(s3).appendChild(App.banner('ralat-b', res.mesej)); s4.hidden = true; return; }
+        im.laporan = res.laporan; im.sebelum = res.sebelum; im.segar = true;
+        lukisLaporan();
+        s4.hidden = false;
+        lukisImportBar();
+      });
+    });
+
+    /* ---------- 3. laporan semakan ---------- */
+    function jadualMasalah(tajuk, kepala, baris) {
+      var sel = h('tbody');
+      baris.forEach(function (b) { sel.appendChild(h('tr', null, b.map(function (x, i) { return h('td', { 'data-label': kepala[i] }, App.teks(x)); }))); });
+      return h('div', null, h('h3', null, tajuk), h('div', { class: 'jadual-bungkus' }, h('table', { class: 'data' },
+        h('thead', null, h('tr', null, kepala.map(function (k) { return h('th', { scope: 'col' }, k); }))), sel)));
+    }
+
+    function lukisAlias(l) {
+      var kotak = h('div');
+      Object.keys(l.nilaiVarian).forEach(function (medan) {
+        var senarai = l.nilaiVarian[medan];
+        var pil = l.pilihan[medan];
+        var perlu = senarai.filter(function (x) { return !x.padan; }).length;
+        var dlId = 'alias-dl-' + medan;
+        var tbody = h('tbody');
+        senarai.forEach(function (v) {
+          im.cadangan[medan] = im.cadangan[medan] || {};
+          im.cadangan[medan][v.kunci] = v.cadangan;
+          var ctrl;
+          if (pil.disahkan) {
+            ctrl = h('select', { class: 'kecil-input', 'aria-label': 'Standardkan ' + v.paparan });
+            ctrl.appendChild(h('option', { value: '' }, '- Pilih -'));
+            pil.senarai.forEach(function (n) { ctrl.appendChild(h('option', { value: n }, n)); });
+            ctrl.value = v.cadangan;
+          } else {
+            ctrl = h('input', { type: 'text', class: 'kecil-input', list: dlId, 'aria-label': 'Standardkan ' + v.paparan, maxlength: '200' });
+            ctrl.value = v.cadangan;
+          }
+          ctrl.addEventListener('change', function () {
+            im.alias[medan] = im.alias[medan] || {};
+            if (ctrl.value === im.cadangan[medan][v.kunci]) delete im.alias[medan][v.kunci];
+            else im.alias[medan][v.kunci] = ctrl.value;
+            tandaTidakSegar();
+          });
+          tbody.appendChild(h('tr', null,
+            h('td', { 'data-label': 'Nilai dalam fail' }, v.paparan, ' ', v.padan ? null : h('span', { class: 'lencana merah' }, 'Perlu dipadankan')),
+            h('td', { class: 'nombor', 'data-label': 'Bilangan' }, String(v.kiraan)),
+            h('td', { 'data-label': 'Standardkan kepada' }, ctrl)));
+        });
+        var det = h('details', { class: 'angka-jadual' },
+          h('summary', null, LABEL[medan] + ': ' + senarai.length + ' nilai unik' + (perlu ? ' (' + perlu + ' perlu dipadankan)' : '')),
+          pil.disahkan ? null : h('datalist', { id: dlId }, pil.senarai.map(function (n) { return h('option', { value: n }); })),
+          h('div', { class: 'jadual-bungkus' }, h('table', { class: 'data' },
+            h('thead', null, h('tr', null, h('th', { scope: 'col' }, 'Nilai dalam fail'), h('th', { scope: 'col', class: 'nombor' }, 'Bilangan'), h('th', { scope: 'col' }, 'Standardkan kepada'))), tbody)));
+        if (perlu) det.open = true;
+        kotak.appendChild(det);
+      });
+      return kotak;
+    }
+
+    function lukisLaporan() {
+      var l = im.laporan;
+      App.kosongkan(s3);
+      s3.appendChild(h('h2', null, 'Semakan data'));
+      s3.appendChild(h('div', { class: 'jubin', id: 'jubin-semak' },
+        jubin(l.jumlahBaris, 'Baris dalam fail'),
+        jubin(l.sah, 'Sah, boleh diimport', 'hijau'),
+        jubin(l.jumlahRalat, 'Ada ralat, ditolak', l.jumlahRalat ? 'merah' : ''),
+        jubin(l.bilDuplikatFail, 'IC berulang dalam fail, dilangkau'),
+        jubin(l.bilDuplikatSedia, 'IC sudah wujud dalam sistem, dilangkau')));
+      s3.appendChild(h('p', { class: 'caption' }, 'Rekod dalam sistem sekarang: ' + im.sebelum + '.'));
+      l.amaran.forEach(function (a) { s3.appendChild(App.banner('amaran-b', a)); });
+      if (l.contohTarikh.length) {
+        s3.appendChild(h('p', { class: 'caption' }, 'Contoh pertukaran format tarikh (semak orientasi hari/bulan): ' +
+          l.contohTarikh.map(function (x) { return x.asal + ' → ' + x.hasil; }).join(', ')));
+      }
+      if (Object.keys(l.nilaiVarian).length) {
+        s3.appendChild(h('h3', { style: 'margin-top:16px' }, 'Standardkan nilai'));
+        s3.appendChild(h('p', { class: 'caption' }, 'Ejaan yang beza huruf besar/kecil atau ruang disatukan secara automatik. Ubah nilai di bawah untuk menggabungkan ejaan lain (contoh "lewat" kepada "Lewat masuk"), kemudian tekan Semak data semula.'));
+        s3.appendChild(lukisAlias(l));
+      }
+      if (l.ralat.length) {
+        s3.appendChild(jadualMasalah('Baris ditolak (' + l.jumlahRalat + ')', ['Baris', 'Nama', 'IC', 'Sebab'],
+          l.ralat.map(function (x) { return [x.baris, x.nama, x.ic, x.mesej]; })));
+      }
+      if (l.duplikatFail.length) {
+        s3.appendChild(jadualMasalah('IC berulang dalam fail (' + l.bilDuplikatFail + ')', ['Baris', 'Nama', 'IC', 'Sama dengan baris'],
+          l.duplikatFail.map(function (x) { return [x.baris, x.nama, x.ic, x.barisAsal + ' (' + x.namaAsal + ')']; })));
+      }
+      if (l.duplikatSedia.length) {
+        s3.appendChild(jadualMasalah('IC sudah wujud dalam sistem (' + l.bilDuplikatSedia + ')', ['Baris', 'Nama dalam fail', 'IC', 'Nama dalam sistem'],
+          l.duplikatSedia.map(function (x) { return [x.baris, x.nama, x.ic, x.namaSedia]; })));
+      }
+    }
+
+    /* ---------- 4. import ---------- */
+    function muatTurunMasalah() {
+      var l = im.laporan;
+      var baris = [['Baris', 'Jenis', 'Nama', 'IC', 'Butiran']];
+      l.ralat.forEach(function (x) { baris.push([x.baris, 'Ralat', x.nama, x.ic, x.mesej]); });
+      l.duplikatFail.forEach(function (x) { baris.push([x.baris, 'Duplikat dalam fail', x.nama, x.ic, 'Sama dengan baris ' + x.barisAsal]); });
+      l.duplikatSedia.forEach(function (x) { baris.push([x.baris, 'Sudah wujud dalam sistem', x.nama, x.ic, x.namaSedia]); });
+      App.muatTurunBlob('laporan-semakan-import.csv', new global.Blob([App.csv(baris)], { type: 'text/csv;charset=utf-8' }));
+    }
+
+    function lukisImportBar() {
+      var l = im.laporan;
+      App.kosongkan(s4);
+      s4.appendChild(h('h2', null, 'Import'));
+      if (!im.segar) {
+        s4.appendChild(App.banner('amaran-b', 'Pemetaan, pilihan atau nilai standard telah diubah. Tekan Semak data semula sebelum import.'));
+      }
+      var importBtn = h('button', { type: 'button', class: 'btn btn-primary', id: 'btn-import', disabled: !im.segar || l.sah === 0 }, 'Import ' + l.sah + ' rekod');
+      var semulaBtn = h('button', { type: 'button', class: 'btn btn-secondary', id: 'btn-semak-semula', onclick: function () { semakBtn.click(); } }, 'Semak data semula');
+      var laporanBtn = (l.jumlahRalat + l.bilDuplikatFail + l.bilDuplikatSedia) > 0
+        ? h('button', { type: 'button', class: 'btn btn-secondary', id: 'btn-laporan', onclick: muatTurunMasalah }, 'Muat turun baris bermasalah (CSV)') : null;
+      s4.appendChild(h('div', { class: 'bar-butang', style: 'margin-top:0' }, importBtn, semulaBtn, laporanBtn));
+      if (l.sah === 0) s4.appendChild(h('p', { class: 'caption', style: 'margin-top:8px' }, 'Tiada baris sah untuk diimport. Semak ralat di atas atau betulkan pemetaan.'));
+
+      importBtn.addEventListener('click', function () {
+        var langkau = l.jumlahRalat + l.bilDuplikatFail + l.bilDuplikatSedia;
+        App.sahkan('Import ' + l.sah + ' rekod?', h('div', null,
+          h('p', null, l.sah + ' rekod baharu akan ditambah. Rekod sedia ada tidak diubah.'),
+          h('p', null, langkau + ' baris dilangkau (ralat atau duplikat).'),
+          h('p', { class: 'caption' }, 'Pastikan salinan Sheet telah dibuat.')), 'Import sekarang').then(function (ya) {
+          if (!ya) return;
+          importBtn.disabled = true; semulaBtn.disabled = true;
+          App.kosongkan(s4).appendChild(App.spinner('Mengimport rekod...'));
+          App.api('api_importLaksana', im.csv, im.pemetaan, im.alias, im.opsyen, im.nama).then(function (res) {
+            if (!c.aktif()) return;
+            if (!res.ok) {
+              if (res.laporan) { im.laporan = res.laporan; im.segar = true; lukisLaporan(); }
+              lukisImportBar();
+              s4.insertBefore(App.banner('ralat-b', res.mesej), s4.firstChild.nextSibling);
+              return;
+            }
+            if (App.sesi) App.sesi.jumlahRekod = res.selepas;
+            App.state.meta = null; App.state.cari = null;
+            s1.hidden = true; s2.hidden = true; s3.hidden = true;
+            App.kosongkan(s4);
+            s4.appendChild(h('h2', null, 'Import selesai'));
+            s4.appendChild(h('div', { class: 'jubin', id: 'jubin-hasil' },
+              jubin(res.sebelum, 'Rekod sebelum import'), jubin(res.ditambah, 'Rekod ditambah', 'hijau'), jubin(res.selepas, 'Rekod selepas import')));
+            s4.appendChild(App.banner(res.sepadan ? 'ok-b' : 'ralat-b', res.sepadan
+              ? 'Jumlah sepadan: ' + res.sebelum + ' + ' + res.ditambah + ' = ' + res.selepas + '.'
+              : 'Jumlah tidak sepadan. Semak Sheet secara manual sebelum meneruskan.'));
+            s4.appendChild(h('div', { class: 'bar-butang' },
+              h('a', { href: '#/cari', class: 'btn btn-primary' }, 'Pergi ke carian'),
+              h('a', { href: '#/dashboard', class: 'btn btn-secondary' }, 'Lihat dashboard'),
+              h('button', { type: 'button', class: 'btn btn-secondary', onclick: function () { App.lukis(); } }, 'Import fail lain')));
+          });
+        });
+      });
+    }
+  };
+})(window);
+</script>
